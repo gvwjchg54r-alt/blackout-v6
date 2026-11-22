@@ -235,20 +235,29 @@ useEffect(() => {
 
   loadPlayers();
 
-  const channel = supabase
-    .channel(`blackout-host-${roomCode}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "UPDATE",
-        schema: "public",
-        table: "blackout_players"
-      },
-      () => {
-        loadPlayers();
-      }
-    )
-    .subscribe();
+  
+const channel = supabase
+  .channel(`blackout-host-${roomCode}`)
+  .on(
+    "postgres_changes",
+    {
+      event: "UPDATE",
+      schema: "public",
+      table: "blackout_players"
+    },
+    (payload) => {
+      console.log("BLACKOUT REALTIME:", payload);
+      loadPlayers();
+    }
+  )
+  .subscribe((status) => {
+    console.log("BLACKOUT CHANNEL:", status);
+
+    if (status === "SUBSCRIBED") {
+      loadPlayers();
+    }
+  });
+
 
   return () => {
     active = false;
