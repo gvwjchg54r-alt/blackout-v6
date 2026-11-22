@@ -134,8 +134,17 @@ const [elapsedSeconds, setElapsedSeconds] = useState(0);
       localStorage.setItem("blackout_mode", "host");
       localStorage.setItem("blackout_names", JSON.stringify(cleanedNames));
 
-      setRoomCode(code);
-      setMode("host");
+
+setRoundNumber(0);
+setRoundStartedAt(null);
+setRoundStatus("waiting");
+setElapsedSeconds(0);
+setMyRole(null);
+setConnectedPlayers([]);
+
+setRoomCode(code);
+setMode("host");
+
     } catch (err) {
       showError(err);
     } finally {
