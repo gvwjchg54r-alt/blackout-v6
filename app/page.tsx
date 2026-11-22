@@ -18,7 +18,15 @@ type JoinedPlayer = {
 
 export default function Home() {
   const [mode, setMode] = useState<"home" | "create" | "join" | "host" | "player">("home");
-  const [names, setNames] = useState(["", "", ""]);
+  const [names, setNames] = useState(["", "", ""]);  
+const [isAlive, setIsAlive] = useState(true);
+const [respawnAt, setRespawnAt] = useState<string | null>(null);
+const [extractionStartedAt, setExtractionStartedAt] =
+  useState<string | null>(null);
+const [extractionCompletedAt, setExtractionCompletedAt] =
+  useState<string | null>(null);
+const [gameNow, setGameNow] = useState(Date.now());
+const [serverOffset, setServerOffset] = useState(0);
 const [spawnName, setSpawnName] = useState<string | null>(null);
 const [extractionName, setExtractionName] = useState<string | null>(null);
 const [spawnValidated, setSpawnValidated] = useState(false);
@@ -385,6 +393,27 @@ const formattedTime =
 
 const suddenDeath = elapsedSeconds >= 1200;
 
+const currentServerTime = gameNow + serverOffset;
+
+const respawnSeconds = respawnAt
+  ? Math.max(
+      0,
+      Math.ceil(
+        (new Date(respawnAt).getTime() - currentServerTime) / 1000
+      )
+    )
+  : 0;
+
+const extractionSeconds = extractionStartedAt
+  ? Math.max(
+      0,
+      120 - Math.floor(
+        (currentServerTime -
+          new Date(extractionStartedAt).getTime()) / 1000
+      )
+    )
+  : 120;
+
 useEffect(() => {
   if (mode !== "player" || !roomCode) return;
 
@@ -474,13 +503,14 @@ async function addZone() {
 }
 
 
+
 async function handleZoneScan(value: string) {
   setScannerOpen(false);
-  setScanMessage("Vérification du point de départ...");
+  setScanMessage("Vérification du QR code...");
 
   try {
     const { data, error } = await supabase.rpc(
-      "blackout_validate_spawn",
+      "blackout_scan_action",
       {
         p_room_code: roomCode,
         p_qr_value: value
@@ -489,67 +519,142 @@ async function handleZoneScan(value: string) {
 
     if (error) throw error;
 
-    if (data === "SPAWN_VALIDE") {
-      setSpawnValidated(true);
-      setScanMessage("✓ DÉPART VALIDÉ");
-    } else if (data === "DEJA_VALIDE") {
-      setSpawnValidated(true);
-      setScanMessage("✓ DÉPART DÉJÀ VALIDÉ");
-    } else if (data === "MAUVAISE_ZONE") {
-      setScanMessage(
-        "✕ MAUVAISE ZONE — REJOINS TON POINT DE DÉPART"
-      );
-    } else {
-      setScanMessage("✕ SCAN NON RECONNU");
+    switch (data) {
+      case "SPAWN_VALIDE":
+        setSpawnValidated(true);
+        setIsAlive(true);
+        setScanMessage("✓ DÉPART / RESPAWN VALIDÉ");
+        break;
+
+      case "PROTOCOLE_LANCE":
+        setScanMessage("✓ PROTOCOLE D'EXTRACTION LANCÉ");
+        break;
+
+      case "PROTOCOLE_DEJA_LANCE":
+        setScanMessage("PROTOCOLE DÉJÀ EN COURS");
+        break;
+
+      case "ATTENTE_RESPAWN":
+        setScanMessage("✕ ATTENDS LA FIN DU COMPTE À REBOURS");
+        break;
+
+      case "MAUVAISE_ZONE":
+        setScanMessage("✕ MAUVAISE ZONE");
+        break;
+
+      case "JOUEUR_ELIMINE":
+        setScanMessage("✕ JOUEUR ÉLIMINÉ");
+        break;
+
+      case "AUCUNE_EXTRACTION":
+        setScanMessage("GHOST : AUCUNE EXTRACTION");
+        break;
+
+      case "EXTRACTION_TERMINEE":
+        setScanMessage("✓ EXTRACTION DÉJÀ TERMINÉE");
+        break;
+
+      default:
+        setScanMessage("✕ QR CODE NON VALIDE");
     }
   } catch (err) {
-    console.error("BLACKOUT SPAWN ERROR:", err);
+    console.error("SCAN ERROR:", err);
     setScanMessage("✕ ERREUR DE VALIDATION");
   }
 }
 
 
+
 useEffect(() => {
-  if (mode !== "player" || !roomCode || roundStatus !== "playing") {
-    setSpawnName(null);
-    setExtractionName(null);
-    setSpawnValidated(false);
-    setExtractionValidated(false);
+  if (mode !== "player" || !roomCode ||
+      roundStatus !== "playing") {
     return;
   }
 
   let active = true;
 
-  async function loadMyZones() {
+  async function refreshGameState() {
     const { data, error } = await supabase.rpc(
-      "blackout_my_zones",
+      "blackout_my_game_state",
       { p_room_code: roomCode }
     );
 
     if (error) {
-      console.error("Erreur destinations :", error);
+      console.error("GAME STATE ERROR:", error);
       return;
     }
 
-    if (!active) return;
+    if (!active || !data?.length) return;
 
-    const result = data?.[0];
+    const state = data[0];
 
-    setSpawnName(result?.spawn_name ?? null);
-    setExtractionName(result?.extraction_name ?? null);
-    setSpawnValidated(result?.spawn_validated ?? false);
-    setExtractionValidated(result?.extraction_validated ?? false);
+    setIsAlive(state.is_alive);
+    setSpawnValidated(state.spawn_validated);
+    setSpawnName(state.spawn_name);
+    setExtractionName(state.extraction_name);
+    setRespawnAt(state.respawn_at);
+    setExtractionStartedAt(state.extraction_started_at);
+    setExtractionCompletedAt(state.extraction_completed_at);
+    setExtractionValidated(
+      state.extraction_completed_at !== null
+    );
+
+    setServerOffset(
+      new Date(state.server_now).getTime() - Date.now()
+    );
   }
 
-  loadMyZones();
+  refreshGameState();
 
-  const interval = setInterval(loadMyZones, 3000);
+  const interval = setInterval(refreshGameState, 1000);
 
   return () => {
     active = false;
     clearInterval(interval);
   };
 }, [mode, roomCode, roundStatus]);
+
+useEffect(() => {
+  const interval = setInterval(() => {
+    setGameNow(Date.now());
+  }, 1000);
+
+  return () => clearInterval(interval);
+}, []);
+
+
+async function reportHit() {
+  if (busy) return;
+
+  setBusy(true);
+  setError("");
+
+  try {
+    const { data, error } = await supabase.rpc(
+      "blackout_report_hit",
+      { p_room_code: roomCode }
+    );
+
+    if (error) throw error;
+
+    if (data === "ELIMINATION_CONFIRMEE") {
+      setIsAlive(false);
+      setSpawnValidated(false);
+      setExtractionStartedAt(null);
+      setScanMessage("ÉLIMINÉ — ATTENDS TON RESPAWN");
+    } else if (data === "DEJA_ELIMINE") {
+      setScanMessage("TU ES DÉJÀ ÉLIMINÉ");
+    } else if (data === "DEPART_NON_VALIDE") {
+      setScanMessage("VALIDE D'ABORD TON DÉPART");
+    } else {
+      setScanMessage(data || "ACTION REFUSÉE");
+    }
+  } catch (err) {
+    showError(err);
+  } finally {
+    setBusy(false);
+  }
+}
 
   function resetScreen() {
     localStorage.removeItem("blackout_room");
@@ -926,6 +1031,89 @@ setConnectedPlayers([]);
             ? "✓ Extraction validée"
             : "Destination confidentielle"}
         </p>
+      </>
+    )}
+  </div>
+)}
+
+{roundStatus === "playing" && (
+  <div style={{
+    marginTop: 25,
+    padding: 20,
+    border: "1px solid #354139",
+    borderRadius: 12,
+    textAlign: "center"
+  }}>
+    <h3>ÉTAT DE L'AGENT</h3>
+
+    {extractionCompletedAt ? (
+      <>
+        <h2 style={{ color: "#d9ff43" }}>
+          EXTRACTION TERMINÉE
+        </h2>
+        <p>Résultat provisoire enregistré.</p>
+      </>
+    ) : !isAlive ? (
+      <>
+        <h2 style={{ color: "#ff6868" }}>
+          AGENT ÉLIMINÉ
+        </h2>
+
+        <h1 style={{ fontSize: 60 }}>
+          {respawnSeconds}s
+        </h1>
+
+        <p>
+          NOUVEAU SPAWN : {spawnName ?? "CHARGEMENT..."}
+        </p>
+
+        <p>
+          {respawnSeconds > 0
+            ? "ATTENDS AVANT DE SCANNER"
+            : "REJOINS TON SPAWN ET SCANNE LE QR CODE"}
+        </p>
+      </>
+    ) : !spawnValidated ? (
+      <>
+        <h2>SPAWN NON VALIDÉ</h2>
+        <p>
+          Rejoins {spawnName ?? "ton point de départ"}
+          {" "}et scanne son QR code.
+        </p>
+      </>
+    ) : (
+      <>
+        <h2 style={{ color: "#d9ff43" }}>
+          AGENT ACTIF
+        </h2>
+
+        {extractionStartedAt && (
+          <>
+            <p>PROTOCOLE D'EXTRACTION</p>
+            <h1 style={{ fontSize: 60 }}>
+              {suddenDeath ? "00:00" :
+                `${String(Math.floor(extractionSeconds / 60)).padStart(2, "0")}:${String(extractionSeconds % 60).padStart(2, "0")}`}
+            </h1>
+            <p>
+              {suddenDeath
+                ? "FINALISATION EN COURS"
+                : "MAINTIENS LA POSITION"}
+            </p>
+          </>
+        )}
+
+        <button
+          style={{
+            ...buttonStyle,
+            background: "#c62828",
+            color: "white",
+            marginTop: 20
+          }}
+          disabled={busy}
+          onClick={reportHit}
+        >
+          JE SUIS TOUCHÉ
+        </button>
       </>
     )}
   </div>
