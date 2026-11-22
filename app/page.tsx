@@ -150,7 +150,7 @@ setRoundStatus("waiting");
 setElapsedSeconds(0);
 setMyRole(null);
 setConnectedPlayers([]);
-
+setZones([]);
 setRoomCode(code);
 setMode("host");
 
@@ -220,6 +220,37 @@ setMode("host");
       setBusy(false);
     }
   }
+
+useEffect(() => {
+  if (mode !== "host" || !roomCode) {
+    return;
+  }
+
+  let active = true;
+
+  async function refreshZones() {
+    try {
+      const { data, error } = await supabase.rpc(
+        "blackout_get_zones",
+        { p_room_code: roomCode }
+      );
+
+      if (error) throw error;
+
+      if (active) {
+        setZones(data || []);
+      }
+    } catch (err) {
+      console.error("BLACKOUT ZONES ERROR:", err);
+    }
+  }
+
+  refreshZones();
+
+  return () => {
+    active = false;
+  };
+}, [mode, roomCode]);
 
 useEffect(() => {
   if (mode !== "host" || !roomCode) return;
@@ -451,6 +482,7 @@ setRoundStatus("waiting");
 setElapsedSeconds(0);
 setMyRole(null);
 setConnectedPlayers([]);
+    setZones([]);
 
   }
 
