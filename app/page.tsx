@@ -4,6 +4,12 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import QRScanner from "./components/QRScanner";
 import { QRCodeSVG } from "qrcode.react";
+const FIXED_ZONE_NAMES = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT"] as const;
+type ZoneSetting = { zone: string; spawn: boolean; extraction: boolean };
+const DEFAULT_ZONE_SETTINGS: ZoneSetting[] = FIXED_ZONE_NAMES.map((zone, i) => ({
+  zone, spawn: i < 3, extraction: i < 2
+}));
+
 type Player = {
   player_slot: number;
   player_name: string;
@@ -50,13 +56,15 @@ const [scanMessage, setScanMessage] = useState("");
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [joined, setJoined] = useState<JoinedPlayer | null>(null);
   const [busy, setBusy] = useState(false); 
-  const [zoneName, setZoneName] = useState("");
-const [allowSpawn, setAllowSpawn] = useState(true);
-const [allowExtraction, setAllowExtraction] = useState(true);
+  const [zoneSettings, setZoneSettings] = useState<ZoneSetting[]>(DEFAULT_ZONE_SETTINGS);
+  const [zoneSaving, setZoneSaving] = useState(false);
+  const [zoneSaved, setZoneSaved] = useState(false);
 const [zones, setZones] = useState<{
   zone_id: string;
   zone_name: string;
   qr_token: string;
+  allow_spawn?: boolean;
+  allow_extraction?: boolean;
 }[]>([]);
 
 const [roundNumber, setRoundNumber] = useState(0);
@@ -165,6 +173,13 @@ const [elapsedSeconds, setElapsedSeconds] = useState(0);
       if (!data?.length) throw new Error("Salon non créé");
 
       const code = data[0].room_code;
+      const { error: configError } = await supabase.rpc("blackout_configure_fixed_zones", {
+        p_room_code: code,
+        p_settings: DEFAULT_ZONE_SETTINGS
+      });
+      if (configError) throw new Error("Salon créé mais zones non configurées : " + configError.message);
+      setZoneSettings(DEFAULT_ZONE_SETTINGS.map(z => ({...z})));
+      setZoneSaved(true);
 
       localStorage.setItem("blackout_room", code);
       localStorage.setItem("blackout_mode", "host");
@@ -267,6 +282,13 @@ useEffect(() => {
 
       if (active) {
         setZones(data || []);
+        if (data?.length === 6) {
+          setZoneSettings(FIXED_ZONE_NAMES.map(zone => {
+            const found = data.find((item: {zone_name: string}) => item.zone_name === zone);
+            return {zone, spawn: Boolean(found?.allow_spawn), extraction: Boolean(found?.allow_extraction)};
+          }));
+          setZoneSaved(true);
+        }
       }
     } catch (err) {
       console.error("BLACKOUT ZONES ERROR:", err);
@@ -486,43 +508,30 @@ async function loadZones(code: string) {
   }
 }
 
-async function addZone() {
-  if (!zoneName.trim()) {
-    setError("Entre un nom de zone.");
+async function saveZoneSettings() {
+  const spawns = zoneSettings.filter(z => z.spawn).length;
+  const extractions = zoneSettings.filter(z => z.extraction).length;
+  if (spawns < 3 || extractions < 2) {
+    setError("Il faut au moins 3 zones de spawn et 2 zones d'extraction.");
     return;
   }
-
-  setBusy(true);
+  setZoneSaving(true);
   setError("");
-
   try {
-    await getUser();
-
-    const { data, error } = await supabase.rpc(
-      "blackout_add_zone",
-      {
-        p_room_code: roomCode,
-        p_zone_name: zoneName.trim(),
-        p_allow_spawn: allowSpawn,
-        p_allow_extraction: allowExtraction
-      }
-    );
-
+    const {error} = await supabase.rpc("blackout_configure_fixed_zones", {
+      p_room_code: roomCode, p_settings: zoneSettings
+    });
     if (error) throw error;
-    if (!data?.length) {
-      throw new Error("Impossible de créer la zone.");
-    }
-
-    setZones((previous) => [...previous, data[0]]);
-    setZoneName("");
+    const {data, error: fetchError} = await supabase.rpc("blackout_get_zones", {p_room_code: roomCode});
+    if (fetchError) throw fetchError;
+    setZones(data || []);
+    setZoneSaved(true);
   } catch (err) {
     showError(err);
   } finally {
-    setBusy(false);
+    setZoneSaving(false);
   }
 }
-
-
 
 async function handleZoneScan(value: string) {
   if (roundStatus !== "playing") {
@@ -1024,73 +1033,33 @@ setConnectedPlayers([]);
     </div>
 
 {roundStatus === "waiting" && (
-  <div style={{ marginTop: 30 }}>
-    <h3>CONFIGURATION DU TERRAIN</h3>
-
-    <input
-      style={inputStyle}
-      placeholder="Nom de la zone (ex. ALPHA)"
-      value={zoneName}
-      maxLength={40}
-      onChange={(e) => setZoneName(e.target.value)}
-    />
-
-    <label style={{ display: "block", marginBottom: 12 }}>
-      <input
-        type="checkbox"
-        checked={allowSpawn}
-        onChange={(e) => setAllowSpawn(e.target.checked)}
-      />
-      {" "}Zone de spawn
-    </label>
-
-    <label style={{ display: "block", marginBottom: 20 }}>
-      <input
-        type="checkbox"
-        checked={allowExtraction}
-        onChange={(e) => setAllowExtraction(e.target.checked)}
-      />
-      {" "}Zone d'extraction
-    </label>
-
-    <button
-      style={buttonStyle}
-      disabled={busy || !zoneName.trim()}
-      onClick={addZone}
-    >
-      AJOUTER LA ZONE
-    </button>
-
-<button
-  style={{
-    ...buttonStyle,
-    marginTop: 12,
-    background: "#26364c",
-    color: "white"
-  }}
-  onClick={() => window.open("/print", "_blank")}
->
-  IMPRIMER LES QR CODES
-</button>
-
-    <div style={{ marginTop: 25 }}>
-      {zones.map((zone) => (
-        <div
-          key={zone.zone_id}
-          style={{
-            padding: 15,
-            marginBottom: 10,
-            border: "1px solid #354139",
-            borderRadius: 8
-          }}
-        >
-          <strong>{zone.zone_name}</strong>
-          <p style={{ color: "#899b90", fontSize: 12 }}>
-            QR enregistré — prêt à générer
-          </p>
-        </div>
-      ))}
+  <div style={{marginTop:30,padding:16,border:"1px solid #354139",borderRadius:10}}>
+    <h3>CONFIGURATION DES 6 ZONES FIXES</h3>
+    <p style={{color:"#899b90",fontSize:13}}>Les QR codes ne changent jamais. Active les zones voulues et choisis leurs usages. Décoche Spawn et Extraction pour désactiver une zone.</p>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 75px 95px",gap:8,alignItems:"center",marginBottom:12,fontSize:12,color:"#899b90"}}>
+      <span>ZONE</span><span>SPAWN</span><span>EXTRACTION</span>
     </div>
+    {zoneSettings.map((setting,index)=>(
+      <div key={setting.zone} style={{display:"grid",gridTemplateColumns:"1fr 75px 95px",gap:8,alignItems:"center",padding:"10px 0",borderTop:"1px solid #354139"}}>
+        <strong>{setting.zone}</strong>
+        <input type="checkbox" aria-label={`${setting.zone} spawn`} checked={setting.spawn}
+          onChange={e=>{setZoneSaved(false);setZoneSettings(old=>old.map((z,i)=>i===index?{...z,spawn:e.target.checked}:z));}} />
+        <input type="checkbox" aria-label={`${setting.zone} extraction`} checked={setting.extraction}
+          onChange={e=>{setZoneSaved(false);setZoneSettings(old=>old.map((z,i)=>i===index?{...z,extraction:e.target.checked}:z));}} />
+      </div>
+    ))}
+    <p style={{fontSize:13,color:"#899b90"}}>
+      {zoneSettings.filter(z=>z.spawn||z.extraction).length}/6 zones actives · {zoneSettings.filter(z=>z.spawn).length} spawns · {zoneSettings.filter(z=>z.extraction).length} extractions
+    </p>
+    <button style={buttonStyle} disabled={zoneSaving||zoneSettings.filter(z=>z.spawn).length<3||zoneSettings.filter(z=>z.extraction).length<2} onClick={saveZoneSettings}>
+      {zoneSaving?"ENREGISTREMENT...":zoneSaved?"CONFIGURATION ENREGISTRÉE — MODIFIER":"ENREGISTRER LES ZONES"}
+    </button>
+    {!zoneSaved && <p style={{color:"#ffb86c",fontSize:12}}>Enregistre tes modifications avant de lancer la manche.</p>}
+    <button style={{...buttonStyle,marginTop:12,background:"#26364c",color:"white"}} onClick={()=>window.open("/print","_blank")}>
+      IMPRIMER LES 6 QR PERMANENTS
+    </button>
+    <p style={{color:"#899b90",fontSize:12}}>Les six codes peuvent être imprimés même si certaines zones sont désactivées pour cette partie.</p>
+    <div style={{marginTop:12}}>{zones.length===6?"✓ Les 6 QR fixes sont associés à ce salon.":"Configuration initiale des QR à vérifier."}</div>
   </div>
 )}
 
@@ -1151,7 +1120,7 @@ setConnectedPlayers([]);
         <button
           style={buttonStyle}
           disabled={
-            busy ||
+            busy || !zoneSaved ||
             connectedPlayers.filter((p) => p.is_taken).length !== 3
           }
           onClick={startRound}
