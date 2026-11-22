@@ -473,13 +473,14 @@ async function addZone() {
   }
 }
 
+
 async function handleZoneScan(value: string) {
   setScannerOpen(false);
-  setScanMessage("Vérification du QR code...");
+  setScanMessage("Vérification du point de départ...");
 
   try {
     const { data, error } = await supabase.rpc(
-      "blackout_check_zone",
+      "blackout_validate_spawn",
       {
         p_room_code: roomCode,
         p_qr_value: value
@@ -488,22 +489,25 @@ async function handleZoneScan(value: string) {
 
     if (error) throw error;
 
-    const result = data?.[0];
-
-    if (result?.valid) {
+    if (data === "SPAWN_VALIDE") {
+      setSpawnValidated(true);
+      setScanMessage("✓ DÉPART VALIDÉ");
+    } else if (data === "DEJA_VALIDE") {
+      setSpawnValidated(true);
+      setScanMessage("✓ DÉPART DÉJÀ VALIDÉ");
+    } else if (data === "MAUVAISE_ZONE") {
       setScanMessage(
-        `✓ ZONE ${result.zone_name} RECONNUE`
+        "✕ MAUVAISE ZONE — REJOINS TON POINT DE DÉPART"
       );
     } else {
-      setScanMessage(
-        "✕ QR CODE INVALIDE POUR CE SALON"
-      );
+      setScanMessage("✕ SCAN NON RECONNU");
     }
   } catch (err) {
-    console.error(err);
-    setScanMessage("✕ ERREUR DE VÉRIFICATION");
+    console.error("BLACKOUT SPAWN ERROR:", err);
+    setScanMessage("✕ ERREUR DE VALIDATION");
   }
 }
+
 
 useEffect(() => {
   if (mode !== "player" || !roomCode || roundStatus !== "playing") {
