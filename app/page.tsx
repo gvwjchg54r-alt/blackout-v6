@@ -335,6 +335,16 @@ const { data, error } = await supabase.rpc(
 );
 
     if (error) throw error;
+    
+const { error: zonesError } = await supabase.rpc(
+  "blackout_assign_zones",
+  { p_room_code: roomCode }
+);
+
+if (zonesError) {
+  throw zonesError;
+}
+
 
     if (!data || data.length === 0) {
       throw new Error("Impossible de lancer la manche.");
