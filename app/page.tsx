@@ -19,7 +19,11 @@ type JoinedPlayer = {
 export default function Home() {
   const [mode, setMode] = useState<"home" | "create" | "join" | "host" | "player">("home");
   const [names, setNames] = useState(["", "", ""]);
-  const [roomCode, setRoomCode] = useState("");
+const [spawnName, setSpawnName] = useState<string | null>(null);
+const [extractionName, setExtractionName] = useState<string | null>(null);
+const [spawnValidated, setSpawnValidated] = useState(false);
+const [extractionValidated, setExtractionValidated] = useState(false);
+ const [roomCode, setRoomCode] = useState("");
 const [scannerOpen, setScannerOpen] = useState(false);
 const [scanMessage, setScanMessage] = useState("");
   const [players, setPlayers] = useState<Player[]>([]);
@@ -512,6 +516,48 @@ async function handleZoneScan(value: string) {
   }
 }
 
+useEffect(() => {
+  if (mode !== "player" || !roomCode || roundStatus !== "playing") {
+    setSpawnName(null);
+    setExtractionName(null);
+    setSpawnValidated(false);
+    setExtractionValidated(false);
+    return;
+  }
+
+  let active = true;
+
+  async function loadMyZones() {
+    const { data, error } = await supabase.rpc(
+      "blackout_my_zones",
+      { p_room_code: roomCode }
+    );
+
+    if (error) {
+      console.error("Erreur destinations :", error);
+      return;
+    }
+
+    if (!active) return;
+
+    const result = data?.[0];
+
+    setSpawnName(result?.spawn_name ?? null);
+    setExtractionName(result?.extraction_name ?? null);
+    setSpawnValidated(result?.spawn_validated ?? false);
+    setExtractionValidated(result?.extraction_validated ?? false);
+  }
+
+  loadMyZones();
+
+  const interval = setInterval(loadMyZones, 3000);
+
+  return () => {
+    active = false;
+    clearInterval(interval);
+  };
+}, [mode, roomCode, roundStatus]);
+
   function resetScreen() {
     localStorage.removeItem("blackout_room");
     localStorage.removeItem("blackout_mode");
@@ -849,6 +895,49 @@ setConnectedPlayers([]);
               <h2 style={{ color: "#d9ff43" }}>{joined.player_name}</h2>
               <p>Salon : {roomCode}</p>
               
+{roundStatus === "playing" && (
+  <div
+    style={{
+      marginTop: 25,
+      padding: 20,
+      border: "1px solid #d9ff43",
+      borderRadius: 12
+    }}
+  >
+    <h3>TES DESTINATIONS</h3>
+
+    <p style={{ fontSize: 13, opacity: 0.7 }}>
+      POINT DE DÉPART
+    </p>
+
+    <h2>{spawnName ?? "Attribution en cours..."}</h2>
+
+    <p>
+      {spawnValidated
+        ? "✓ Départ validé"
+        : "Scan du QR code requis"}
+    </p>
+
+    {extractionName && (
+      <>
+        <hr />
+
+        <p style={{ fontSize: 13, opacity: 0.7 }}>
+          EXTRACTION SECRÈTE
+        </p>
+
+        <h2>{extractionName}</h2>
+
+        <p>
+          {extractionValidated
+            ? "✓ Extraction validée"
+            : "Destination confidentielle"}
+        </p>
+      </>
+    )}
+  </div>
+)}
+
 <div style={{ marginTop: 25 }}>
   {!scannerOpen && (
     <button
