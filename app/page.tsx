@@ -105,13 +105,17 @@ export default function Home() {
       localStorage.setItem("blackout_room", createdCode);
       localStorage.setItem("blackout_names", JSON.stringify(cleanedNames));
 
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Une erreur est survenue."
-      );
-    } finally {
+
+} catch (err) {
+  console.error("BLACKOUT ERROR:", err);
+
+  const message =
+    err && typeof err === "object" && "message" in err
+      ? String(err.message)
+      : JSON.stringify(err);
+
+  setError(message || "Erreur inconnue");
+} finally {
       setLoading(false);
     }
   }
