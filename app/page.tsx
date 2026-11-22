@@ -26,6 +26,10 @@ const [extractionStartedAt, setExtractionStartedAt] =
 const [extractionCompletedAt, setExtractionCompletedAt] =
   useState<string | null>(null);
 const [gameNow, setGameNow] = useState(Date.now());
+const [roundWinnerName, setRoundWinnerName] =
+  useState<string | null>(null);
+const [roundWinnerRole, setRoundWinnerRole] =
+  useState<string | null>(null);
 const [serverOffset, setServerOffset] = useState(0);
 const [spawnName, setSpawnName] = useState<string | null>(null);
 const [extractionName, setExtractionName] = useState<string | null>(null);
@@ -435,7 +439,11 @@ useEffect(() => {
     const round = data[0];
 
     setRoundNumber(round.round_number);
-    setRoundStatus(round.round_status);
+    setRoundStatus((previous) =>
+  previous === "finished" && round.round_status === "playing"
+    ? previous
+    : round.round_status
+);
     setRoundStartedAt(round.started_at);
     setMyRole(round.my_role);
   }
@@ -505,6 +513,11 @@ async function addZone() {
 
 
 async function handleZoneScan(value: string) {
+  if (roundStatus !== "playing") {
+  setScannerOpen(false);
+  setScanMessage("MANCHE TERMINÉE");
+  return;
+}
   setScannerOpen(false);
   setScanMessage("Vérification du QR code...");
 
@@ -624,6 +637,7 @@ useEffect(() => {
 
 
 async function reportHit() {
+  if (roundStatus !== "playing") return;
   if (busy) return;
 
   setBusy(true);
@@ -655,6 +669,55 @@ async function reportHit() {
     setBusy(false);
   }
 }
+
+useEffect(() => {
+  if (
+    !roomCode ||
+    (mode !== "host" && mode !== "player") ||
+    roundStatus === "waiting"
+  ) {
+    return;
+  }
+
+  let active = true;
+  let checking = false;
+
+  async function checkRoundResult() {
+    if (checking) return;
+    checking = true;
+
+    try {
+      const { data, error } = await supabase.rpc(
+        "blackout_finish_round",
+        { p_room_code: roomCode }
+      );
+
+      if (error) throw error;
+      if (!active || !data?.length) return;
+
+      const result = data[0];
+
+      if (result.round_status === "finished") {
+        setRoundStatus("finished");
+        setRoundWinnerName(result.winner_name);
+        setRoundWinnerRole(result.winner_role);
+      }
+    } catch (err) {
+      console.error("ROUND RESULT ERROR:", err);
+    } finally {
+      checking = false;
+    }
+  }
+
+  checkRoundResult();
+
+  const interval = setInterval(checkRoundResult, 1000);
+
+  return () => {
+    active = false;
+    clearInterval(interval);
+  };
+}, [mode, roomCode, roundStatus]);
 
   function resetScreen() {
     localStorage.removeItem("blackout_room");
@@ -813,6 +876,37 @@ setConnectedPlayers([]);
           </>
         )}
 
+
+{roundStatus === "finished" &&
+  (mode === "host" || mode === "player") && (
+    <div
+      style={{
+        padding: 25,
+        marginTop: 25,
+        marginBottom: 25,
+        border: "2px solid #d9ff43",
+        borderRadius: 12,
+        textAlign: "center",
+        background: "#151d19"
+      }}
+    >
+      <h2 style={{ color: "#d9ff43" }}>
+        MANCHE TERMINÉE
+      </h2>
+
+      <p>EXTRACTION RÉUSSIE</p>
+
+      <h1 style={{ fontSize: 38 }}>
+        {roundWinnerName ?? "Chargement..."}
+      </h1>
+
+      <h2 style={{ color: "#d9ff43" }}>
+        {roundWinnerRole?.toUpperCase()}
+      </h2>
+
+      <p>Résultat provisoire</p>
+    </div>
+)}
 
 {mode === "host" && (
   <>
