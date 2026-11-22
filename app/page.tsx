@@ -516,102 +516,102 @@ useEffect(() => {
           </>
         )}
 
-        {mode === "host" && (
-         
-<div style={{ marginTop: 30 }}>
-  {roundStatus === "waiting" ? (
-    <button
-      style={buttonStyle}
-      disabled={
-        busy ||
-        connectedPlayers.filter((p) => p.is_taken).length !== 3
-      }
-      onClick={startRound}
-    >
-      {busy
-        ? "LANCEMENT..."
-        : "LANCER LA MANCHE"}
-    </button>
-  ) : (
+
+{mode === "host" && (
+  <>
+    <h2>Salon créé</h2>
+    <p>Communique ce code aux trois joueurs :</p>
+
     <div
       style={{
         padding: 25,
         border: "1px solid #d9ff43",
         borderRadius: 12,
-        textAlign: "center"
+        fontSize: 38,
+        textAlign: "center",
+        letterSpacing: 8,
+        color: "#d9ff43",
+        fontWeight: 900
       }}
     >
-      <p>MANCHE {roundNumber}</p>
+      {roomCode}
+    </div>
 
-      <h2
+    <h3 style={{ marginTop: 30 }}>
+      AGENTS CONNECTÉS —{" "}
+      {connectedPlayers.filter((p) => p.is_taken).length}/3
+    </h3>
+
+    {connectedPlayers.map((player) => (
+      <div
+        key={player.player_slot}
         style={{
-          fontSize: 54,
-          color: suddenDeath ? "#ff6868" : "#d9ff43",
-          margin: "15px 0"
+          padding: 15,
+          marginBottom: 10,
+          border: "1px solid #354139",
+          borderRadius: 8,
+          display: "flex",
+          justifyContent: "space-between"
         }}
       >
-        {formattedTime}
-      </h2>
+        <strong>{player.player_name}</strong>
 
-      <strong>
-        {suddenDeath
-          ? "⚠ MORT SUBITE — EXTRACTION INSTANTANÉE"
-          : "OPÉRATION EN COURS"}
-      </strong>
+        <span
+          style={{
+            color: player.is_taken ? "#d9ff43" : "#899b90"
+          }}
+        >
+          {player.is_taken ? "CONNECTÉ" : "EN ATTENTE"}
+        </span>
+      </div>
+    ))}
+
+    <div style={{ marginTop: 30 }}>
+      {roundStatus === "waiting" ? (
+        <button
+          style={buttonStyle}
+          disabled={
+            busy ||
+            connectedPlayers.filter((p) => p.is_taken).length !== 3
+          }
+          onClick={startRound}
+        >
+          {busy ? "LANCEMENT..." : "LANCER LA MANCHE"}
+        </button>
+      ) : (
+        <div
+          style={{
+            padding: 25,
+            border: "1px solid #d9ff43",
+            borderRadius: 12,
+            textAlign: "center"
+          }}
+        >
+          <p>MANCHE {roundNumber}</p>
+
+          <h2
+            style={{
+              fontSize: 54,
+              color: suddenDeath ? "#ff6868" : "#d9ff43",
+              margin: "15px 0"
+            }}
+          >
+            {formattedTime}
+          </h2>
+
+          <strong>
+            {suddenDeath
+              ? "⚠ MORT SUBITE — EXTRACTION INSTANTANÉE"
+              : "OPÉRATION EN COURS"}
+          </strong>
+        </div>
+      )}
     </div>
-  )}
-</div>
- <>
-            <h2>Salon créé</h2>
-            <p>Communique ce code aux trois joueurs :</p>
-            <div
-              style={{
-                padding: 25,
-                border: "1px solid #d9ff43",
-                borderRadius: 12,
-                fontSize: 38,
-                textAlign: "center",
-                letterSpacing: 8,
-                color: "#d9ff43",
-                fontWeight: 900
-              }}
-            >
-              {roomCode}
-            </div>
-            
-<h3 style={{ marginTop: 30 }}>
-  AGENTS CONNECTÉS
-  {" — "}
-  {connectedPlayers.filter((p) => p.is_taken).length}/3
-</h3>
+  </>
+)}
 
-{connectedPlayers.map((player) => (
-  <div
-    key={player.player_slot}
-    style={{
-      padding: 15,
-      marginBottom: 10,
-      border: "1px solid #354139",
-      borderRadius: 8,
-      display: "flex",
-      justifyContent: "space-between"
-    }}
-  >
-    <strong>{player.player_name}</strong>
-    <span
-      style={{
-        color: player.is_taken ? "#d9ff43" : "#899b90"
-      }}
-    >
-      {player.is_taken ? "CONNECTÉ" : "EN ATTENTE"}
-    </span>
-  </div>
-))}
+{mode === "player" && joined && (
 
-          </>
-        )}
-
-        {mode === "player" && joined && (
           <>
             <h2>Agent connecté</h2>
             <div
