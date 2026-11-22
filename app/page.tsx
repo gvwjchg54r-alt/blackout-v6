@@ -1,205 +1,413 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+type Player = {
+  player_slot: number;
+  player_name: string;
+  is_taken: boolean;
+};
+
+type JoinedPlayer = {
+  game_id: string;
+  player_name: string;
+  player_slot: number;
+};
+
 export default function Home() {
+  const [mode, setMode] = useState<"home" | "create" | "join" | "host" | "player">("home");
   const [names, setNames] = useState(["", "", ""]);
   const [roomCode, setRoomCode] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  const [joined, setJoined] = useState<JoinedPlayer | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  function updateName(index: number, value: string) {
-    setNames(previous =>
-      previous.map((name, i) =>
-        i === index ? value : name
-      )
+  async function getUser() {
+    const { data: sessionData } = await supabase.auth.getSession();
+
+    if (sessionData.session?.user) {
+      return sessionData.session.user;
+    }
+
+    const { data, error } = await supabase.auth.signInAnonymously();
+
+    if (error || !data.user) {
+      throw error || new Error("Connexion impossible");
+    }
+
+    return data.user;
+  }
+
+  function showError(err: unknown) {
+    console.error("BLACKOUT ERROR:", err);
+    setError(
+      err instanceof Error
+        ? err.message
+        : err && typeof err === "object" && "message" in err
+          ? String(err.message)
+          : "Une erreur est survenue"
     );
   }
 
-  function generateCode() {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const bytes = new Uint8Array(6);
-    crypto.getRandomValues(bytes);
+  useEffect(() => {
+    async function restore() {
+      const savedCode = localStorage.getItem("blackout_room");
+      const savedMode = localStorage.getItem("blackout_mode");
 
-    return Array.from(bytes, byte =>
-      alphabet[byte % alphabet.length]
-    ).join("");
-  }
+      if (!savedCode || !savedMode) return;
+
+      try {
+        await getUser();
+
+        if (savedMode === "host") {
+          setRoomCode(savedCode);
+          setMode("host");
+        }
+
+        if (savedMode === "player") {
+          const { data, error } = await supabase.rpc(
+            "blackout_resume_game",
+            { p_room_code: savedCode }
+          );
+
+          if (error) throw error;
+
+          if (data?.length) {
+            setRoomCode(savedCode);
+            setJoined({
+              game_id: data[0].game_id,
+              player_name: data[0].player_name,
+              player_slot: data[0].player_slot
+            });
+            setMode("player");
+          }
+        }
+      } catch (err) {
+        console.error("Restore error:", err);
+      }
+    }
+
+    restore();
+  }, []);
 
   async function createGame() {
     setError("");
 
-    const cleanedNames = names.map(name => name.trim());
+    const cleanedNames = names.map((n) => n.trim());
 
-    if (cleanedNames.some(name => !name)) {
-      setError("Entre les noms des trois joueurs.");
+    if (cleanedNames.some((n) => !n || n.length > 24)) {
+      setError("Entre trois noms de 1 à 24 caractères.");
       return;
     }
 
-    if (new Set(cleanedNames.map(n => n.toLowerCase())).size !== 3) {
+    if (new Set(cleanedNames.map((n) => n.toLowerCase())).size !== 3) {
       setError("Les trois noms doivent être différents.");
       return;
     }
 
-    setLoading(true);
+    setBusy(true);
 
     try {
-      let { data: sessionData, error: sessionError } =
-        await supabase.auth.getSession();
+      await getUser();
 
-      if (sessionError) throw sessionError;
+      const { data, error } = await supabase.rpc(
+        "blackout_create_game",
+        { p_names: cleanedNames }
+      );
 
-      let user = sessionData.session?.user;
+      if (error) throw error;
+      if (!data?.length) throw new Error("Salon non créé");
 
-      if (!user) {
-        const result = await supabase.auth.signInAnonymously();
+      const code = data[0].room_code;
 
-        if (result.error) throw result.error;
-        user = result.data.user ?? undefined;
-      }
-
-      if (!user) {
-        throw new Error("Connexion impossible.");
-      }
-
-     
-const { data, error: gameError } =
-  await supabase.rpc("blackout_create_game", {
-    p_names: cleanedNames
-  });
-
-if (gameError) throw gameError;
-
-if (!data || data.length === 0) {
-  throw new Error("Le serveur n'a pas créé de salon.");
-}
-
-const createdCode = data[0].room_code;
-
-
-      setRoomCode(createdCode);
-      localStorage.setItem("blackout_room", createdCode);
+      localStorage.setItem("blackout_room", code);
+      localStorage.setItem("blackout_mode", "host");
       localStorage.setItem("blackout_names", JSON.stringify(cleanedNames));
 
-
-} catch (err) {
-  console.error("BLACKOUT ERROR:", err);
-
-  const message =
-    err && typeof err === "object" && "message" in err
-      ? String(err.message)
-      : JSON.stringify(err);
-
-  setError(message || "Erreur inconnue");
-} finally {
-      setLoading(false);
+      setRoomCode(code);
+      setMode("host");
+    } catch (err) {
+      showError(err);
+    } finally {
+      setBusy(false);
     }
   }
 
+  async function findGame() {
+    setError("");
+    setBusy(true);
+
+    try {
+      await getUser();
+
+      const code = roomCode.trim().toUpperCase();
+
+      const { data, error } = await supabase.rpc(
+        "blackout_find_game",
+        { p_room_code: code }
+      );
+
+      if (error) throw error;
+
+      setRoomCode(code);
+      setPlayers(data || []);
+      setSelectedSlot(null);
+    } catch (err) {
+      showError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function joinGame() {
+    if (selectedSlot === null) return;
+
+    setError("");
+    setBusy(true);
+
+    try {
+      await getUser();
+
+      const { data, error } = await supabase.rpc(
+        "blackout_join_game",
+        {
+          p_room_code: roomCode,
+          p_player_slot: selectedSlot
+        }
+      );
+
+      if (error) throw error;
+      if (!data?.length) throw new Error("Connexion impossible");
+
+      const player = data[0];
+
+      localStorage.setItem("blackout_room", roomCode);
+      localStorage.setItem("blackout_mode", "player");
+
+      setJoined(player);
+      setMode("player");
+    } catch (err) {
+      showError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function resetScreen() {
+    localStorage.removeItem("blackout_room");
+    localStorage.removeItem("blackout_mode");
+    setMode("home");
+    setPlayers([]);
+    setJoined(null);
+    setSelectedSlot(null);
+    setError("");
+  }
+
+  const buttonStyle: React.CSSProperties = {
+    background: "#d9ff43",
+    color: "#101410",
+    border: "none",
+    borderRadius: 8,
+    padding: "16px 20px",
+    fontSize: 15,
+    fontWeight: 900,
+    cursor: "pointer",
+    width: "100%"
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: 14,
+    marginBottom: 12,
+    background: "#151d19",
+    color: "white",
+    border: "1px solid #354139",
+    borderRadius: 8,
+    fontSize: 16,
+    boxSizing: "border-box"
+  };
+
   return (
-    <main style={{
-      minHeight: "100vh",
-      background: "#090d14",
-      color: "#f5f7fa",
-      padding: "50px 20px",
-      fontFamily: "Arial, sans-serif",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center"
-    }}>
-      <div style={{ width: "100%", maxWidth: 480 }}>
-        <p style={{ color: "#f05252", letterSpacing: 4 }}>
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#090e0c",
+        color: "#f1f5f0",
+        fontFamily: "Arial, sans-serif",
+        display: "flex",
+        justifyContent: "center",
+        padding: "60px 18px"
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 460 }}>
+        <p style={{ color: "#d9ff43", letterSpacing: 5, fontSize: 12 }}>
           TACTICAL OPERATIONS SYSTEM
         </p>
 
-        <h1 style={{ fontSize: 52, marginBottom: 4 }}>
-          BLACKOUT
+        <h1 style={{ fontSize: 44, margin: "8px 0" }}>
+          BLACKOUT <span style={{ color: "#d9ff43" }}>V6</span>
         </h1>
 
-        <p style={{ color: "#9ca3af", marginBottom: 35 }}>
-          V6 — MULTIPLAYER CONTROL CENTER
+        <p style={{ color: "#899b90", marginBottom: 35 }}>
+          THREE AGENTS. ONE BRIEFCASE. NO SECOND CHANCE.
         </p>
 
-        <div style={{
-          background: "#151c29",
-          border: "1px solid #303b4d",
-          borderRadius: 14,
-          padding: 25
-        }}>
-          <h2>Créer une opération</h2>
+        {mode === "home" && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <button style={buttonStyle} onClick={() => setMode("create")}>
+              CRÉER UNE PARTIE — PC
+            </button>
+            <button style={buttonStyle} onClick={() => setMode("join")}>
+              REJOINDRE UNE PARTIE — TÉLÉPHONE
+            </button>
+          </div>
+        )}
 
-          <p style={{ color: "#9ca3af" }}>
-            Enregistre les trois participants.
-          </p>
+        {mode === "create" && (
+          <>
+            <h2>Nouvelle opération</h2>
+            {names.map((name, index) => (
+              <input
+                key={index}
+                style={inputStyle}
+                placeholder={`Nom du joueur ${index + 1}`}
+                maxLength={24}
+                value={name}
+                onChange={(e) => {
+                  const updated = [...names];
+                  updated[index] = e.target.value;
+                  setNames(updated);
+                }}
+              />
+            ))}
+            <button style={buttonStyle} disabled={busy} onClick={createGame}>
+              {busy ? "CRÉATION..." : "CRÉER LE SALON"}
+            </button>
+          </>
+        )}
 
-          {names.map((name, index) => (
+        {mode === "join" && (
+          <>
+            <h2>Rejoindre une opération</h2>
+
             <input
-              key={index}
-              value={name}
-              onChange={e => updateName(index, e.target.value)}
-              placeholder={`Agent ${index + 1}`}
-              maxLength={24}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: 14,
-                marginBottom: 12,
-                background: "#0b111b",
-                color: "white",
-                border: "1px solid #354154",
-                borderRadius: 8
+              style={inputStyle}
+              placeholder="CODE DU SALON"
+              maxLength={6}
+              value={roomCode}
+              onChange={(e) => {
+                setRoomCode(e.target.value.toUpperCase());
+                setPlayers([]);
               }}
             />
-          ))}
 
+            <button style={buttonStyle} disabled={busy} onClick={findGame}>
+              {busy ? "RECHERCHE..." : "RECHERCHER LE SALON"}
+            </button>
+
+            {players.length > 0 && (
+              <div style={{ marginTop: 25 }}>
+                <h3>Choisis ton identité</h3>
+
+                {players.map((player) => (
+                  <button
+                    key={player.player_slot}
+                    disabled={player.is_taken}
+                    onClick={() => setSelectedSlot(player.player_slot)}
+                    style={{
+                      ...inputStyle,
+                      textAlign: "left",
+                      cursor: player.is_taken ? "not-allowed" : "pointer",
+                      borderColor:
+                        selectedSlot === player.player_slot
+                          ? "#d9ff43"
+                          : "#354139",
+                      opacity: player.is_taken ? 0.4 : 1
+                    }}
+                  >
+                    {player.player_name}
+                    {player.is_taken ? " — OCCUPÉ" : ""}
+                  </button>
+                ))}
+
+                <button
+                  style={buttonStyle}
+                  disabled={busy || selectedSlot === null}
+                  onClick={joinGame}
+                >
+                  REJOINDRE L'OPÉRATION
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {mode === "host" && (
+          <>
+            <h2>Salon créé</h2>
+            <p>Communique ce code aux trois joueurs :</p>
+            <div
+              style={{
+                padding: 25,
+                border: "1px solid #d9ff43",
+                borderRadius: 12,
+                fontSize: 38,
+                textAlign: "center",
+                letterSpacing: 8,
+                color: "#d9ff43",
+                fontWeight: 900
+              }}
+            >
+              {roomCode}
+            </div>
+            <p style={{ color: "#899b90" }}>
+              En attente de connexion des agents...
+            </p>
+          </>
+        )}
+
+        {mode === "player" && joined && (
+          <>
+            <h2>Agent connecté</h2>
+            <div
+              style={{
+                border: "1px solid #354139",
+                padding: 24,
+                borderRadius: 12
+              }}
+            >
+              <p style={{ color: "#899b90" }}>IDENTITÉ CONFIRMÉE</p>
+              <h2 style={{ color: "#d9ff43" }}>{joined.player_name}</h2>
+              <p>Salon : {roomCode}</p>
+              <p>En attente du lancement de la manche...</p>
+            </div>
+          </>
+        )}
+
+        {error && (
+          <p style={{ color: "#ff6868", marginTop: 20 }}>
+            ERREUR : {error}
+          </p>
+        )}
+
+        {mode !== "home" && (
           <button
-            onClick={createGame}
-            disabled={loading}
+            onClick={resetScreen}
             style={{
-              width: "100%",
-              padding: 16,
-              background: "#d93939",
-              color: "white",
-              border: 0,
-              borderRadius: 8,
-              fontWeight: "bold",
-              cursor: "pointer",
-              opacity: loading ? 0.6 : 1
+              background: "none",
+              color: "#899b90",
+              border: "none",
+              marginTop: 30,
+              cursor: "pointer"
             }}
           >
-            {loading ? "CONNEXION..." : "CRÉER LA PARTIE"}
+            ← Retour à l'accueil
           </button>
-
-          {error && (
-            <p style={{ color: "#ff7777" }}>
-              {error}
-            </p>
-          )}
-
-          {roomCode && (
-            <div style={{
-              marginTop: 24,
-              textAlign: "center"
-            }}>
-              <p>CODE DE SALON</p>
-
-              <h2 style={{
-                color: "#f05252",
-                fontSize: 38,
-                letterSpacing: 5
-              }}>
-                {roomCode}
-              </h2>
-
-              <p style={{ color: "#9ca3af" }}>
-                Salon enregistré sur le serveur.
-                Connexion des joueurs à venir.
-              </p>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </main>
   );
