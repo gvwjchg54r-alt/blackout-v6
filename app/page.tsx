@@ -24,7 +24,12 @@ export default function Home() {
   const [connectedPlayers, setConnectedPlayers] = useState<Player[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [joined, setJoined] = useState<JoinedPlayer | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);  
+const [roundNumber, setRoundNumber] = useState(0);
+const [roundStartedAt, setRoundStartedAt] = useState<string | null>(null);
+const [roundStatus, setRoundStatus] = useState("waiting");
+const [myRole, setMyRole] = useState<string | null>(null);
+const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState("");
 
   async function getUser() {
@@ -265,6 +270,103 @@ const channel = supabase
   };
 }, [mode, roomCode]);
 
+async function startRound() {
+  setError("");
+  setBusy(true);
+
+  try {
+    await getUser();
+
+    const { data, error } = await supabase.rpc(
+      "blackout_start_round",
+      { p_room_code: roomCode }
+    );
+
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
+      throw new Error("Impossible de lancer la manche.");
+    }
+
+    setRoundNumber(data[0].round_number);
+    setRoundStartedAt(data[0].started_at);
+    setRoundStatus("playing");
+  } catch (err) {
+    showError(err);
+  } finally {
+    setBusy(false);
+  }
+}
+
+useEffect(() => {
+  if (!roundStartedAt || roundStatus !== "playing") {
+    return;
+  }
+
+  function updateClock() {
+    const start = new Date(roundStartedAt!).getTime();
+    const elapsed = Math.max(
+      0,
+      Math.floor((Date.now() - start) / 1000)
+    );
+
+    setElapsedSeconds(elapsed);
+  }
+
+  updateClock();
+
+  const interval = setInterval(updateClock, 1000);
+
+  return () => clearInterval(interval);
+}, [roundStartedAt, roundStatus]);
+
+const minutes = Math.floor(elapsedSeconds / 60);
+const seconds = elapsedSeconds % 60;
+
+const formattedTime =
+  String(minutes).padStart(2, "0") +
+  ":" +
+  String(seconds).padStart(2, "0");
+
+const suddenDeath = elapsedSeconds >= 1200;
+
+useEffect(() => {
+  if (mode !== "player" || !roomCode) return;
+
+  let active = true;
+
+  async function refreshRound() {
+    const { data, error } = await supabase.rpc(
+      "blackout_my_round",
+      { p_room_code: roomCode }
+    );
+
+    if (error) {
+      console.error("ROUND SYNC ERROR:", error);
+      return;
+    }
+
+    if (!active || !data?.length) return;
+
+    const round = data[0];
+
+    setRoundNumber(round.round_number);
+    setRoundStatus(round.round_status);
+    setRoundStartedAt(round.started_at);
+    setMyRole(round.my_role);
+  }
+
+  refreshRound();
+
+  // Vérification toutes les 3 secondes.
+  const interval = setInterval(refreshRound, 3000);
+
+  return () => {
+    active = false;
+    clearInterval(interval);
+  };
+}, [mode, roomCode]);
+
   function resetScreen() {
     localStorage.removeItem("blackout_room");
     localStorage.removeItem("blackout_mode");
@@ -415,7 +517,51 @@ const channel = supabase
         )}
 
         {mode === "host" && (
-          <>
+         
+<div style={{ marginTop: 30 }}>
+  {roundStatus === "waiting" ? (
+    <button
+      style={buttonStyle}
+      disabled={
+        busy ||
+        connectedPlayers.filter((p) => p.is_taken).length !== 3
+      }
+      onClick={startRound}
+    >
+      {busy
+        ? "LANCEMENT..."
+        : "LANCER LA MANCHE"}
+    </button>
+  ) : (
+    <div
+      style={{
+        padding: 25,
+        border: "1px solid #d9ff43",
+        borderRadius: 12,
+        textAlign: "center"
+      }}
+    >
+      <p>MANCHE {roundNumber}</p>
+
+      <h2
+        style={{
+          fontSize: 54,
+          color: suddenDeath ? "#ff6868" : "#d9ff43",
+          margin: "15px 0"
+        }}
+      >
+        {formattedTime}
+      </h2>
+
+      <strong>
+        {suddenDeath
+          ? "⚠ MORT SUBITE — EXTRACTION INSTANTANÉE"
+          : "OPÉRATION EN COURS"}
+      </strong>
+    </div>
+  )}
+</div>
+ <>
             <h2>Salon créé</h2>
             <p>Communique ce code aux trois joueurs :</p>
             <div
@@ -478,7 +624,44 @@ const channel = supabase
               <p style={{ color: "#899b90" }}>IDENTITÉ CONFIRMÉE</p>
               <h2 style={{ color: "#d9ff43" }}>{joined.player_name}</h2>
               <p>Salon : {roomCode}</p>
-              <p>En attente du lancement de la manche...</p>
+              
+{roundStatus === "playing" && myRole ? (
+  <div style={{ marginTop: 25 }}>
+    <p style={{ color: "#899b90" }}>
+      MANCHE {roundNumber} — IDENTITÉ SECRÈTE
+    </p>
+
+    <h1
+      style={{
+        fontSize: 44,
+        color: "#d9ff43",
+        textTransform: "uppercase"
+      }}
+    >
+      {myRole}
+    </h1>
+
+    <p>
+      ARME :{" "}
+      {myRole === "ghost"
+        ? "PISTOLET"
+        : myRole === "raven"
+          ? "SNIPER"
+          : "MP5"}
+    </p>
+
+    <h2>{formattedTime}</h2>
+
+    <strong style={{ color: suddenDeath ? "#ff6868" : "#d9ff43" }}>
+      {suddenDeath
+        ? "MORT SUBITE"
+        : "OPÉRATION EN COURS"}
+    </strong>
+  </div>
+) : (
+  <p>En attente du lancement de la manche...</p>
+)}
+
             </div>
           </>
         )}
