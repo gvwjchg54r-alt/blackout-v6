@@ -384,7 +384,14 @@ useEffect(() => {
     setPlayers([]);
     setJoined(null);
     setSelectedSlot(null);
-    setError("");
+    setError("");    
+setRoundNumber(0);
+setRoundStartedAt(null);
+setRoundStatus("waiting");
+setElapsedSeconds(0);
+setMyRole(null);
+setConnectedPlayers([]);
+
   }
 
   const buttonStyle: React.CSSProperties = {
