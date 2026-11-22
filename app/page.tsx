@@ -64,42 +64,20 @@ export default function Home() {
         throw new Error("Connexion impossible.");
       }
 
-      let createdCode = "";
-      let gameId = "";
+     
+const { data, error: gameError } =
+  await supabase.rpc("blackout_create_game", {
+    p_names: cleanedNames
+  });
 
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const code = generateCode();
+if (gameError) throw gameError;
 
-        const { data, error: gameError } =
-          await supabase
-            .from("blackout_games")
-            .insert({
-              room_code: code,
-              host_user_id: user.id,
-              status: "waiting",
-              current_round: 1
-            })
-            .select("id, room_code")
-            .single();
+if (!data || data.length === 0) {
+  throw new Error("Le serveur n'a pas créé de salon.");
+}
 
-        if (!gameError && data) {
-          createdCode = data.room_code;
-          gameId = data.id;
-          break;
-        }
+const createdCode = data[0].room_code;
 
-        if (gameError?.code !== "23505") {
-          throw gameError ?? new Error("Création impossible.");
-        }
-      }
-
-      if (!gameId) {
-        throw new Error("Impossible de générer un code unique.");
-      }
-
-      // Enregistrement des trois participants.
-      // L'écriture est réservée au serveur pour le moment.
-      // Nous l'activerons dans l'étape suivante.
 
       setRoomCode(createdCode);
       localStorage.setItem("blackout_room", createdCode);
