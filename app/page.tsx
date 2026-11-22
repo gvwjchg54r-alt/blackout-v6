@@ -325,6 +325,7 @@ const channel = supabase
   };
 }, [mode, roomCode]);
 
+a
 async function startRound() {
   setError("");
   setBusy(true);
@@ -332,21 +333,25 @@ async function startRound() {
   try {
     await getUser();
 
-
-const { data, error } = await supabase.rpc(
-  "blackout_start_round",
-  { p_room_code: roomCode }
-);
+    const { data, error } = await supabase.rpc(
+      "blackout_launch_round",
+      { p_room_code: roomCode }
+    );
 
     if (error) throw error;
-    
-const { error: zonesError } = await supabase.rpc(
-  "blackout_assign_zones",
-  { p_room_code: roomCode }
-);
 
-if (zonesError) {
-  throw zonesError;
+    if (!data || data.length === 0) {
+      throw new Error("Impossible de lancer la manche.");
+    }
+
+    setRoundNumber(data[0].round_number);
+    setRoundStartedAt(data[0].started_at);
+    setRoundStatus("playing");
+  } catch (err) {
+    showError(err);
+  } finally {
+    setBusy(false);
+  }
 }
 
 
