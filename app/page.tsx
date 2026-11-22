@@ -21,6 +21,7 @@ export default function Home() {
   const [names, setNames] = useState(["", "", ""]);
   const [roomCode, setRoomCode] = useState("");
   const [players, setPlayers] = useState<Player[]>([]);
+  const [connectedPlayers, setConnectedPlayers] = useState<Player[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [joined, setJoined] = useState<JoinedPlayer | null>(null);
   const [busy, setBusy] = useState(false);
@@ -197,6 +198,64 @@ export default function Home() {
     }
   }
 
+useEffect(() => {
+  if (mode !== "host" || !roomCode) return;
+
+  let active = true;
+  let gameId = "";
+
+  async function loadPlayers() {
+    const { data: game, error: gameError } =
+      await supabase
+        .from("blackout_games")
+        .select("id")
+        .eq("room_code", roomCode)
+        .single();
+
+    if (gameError || !game || !active) return;
+
+    gameId = game.id;
+
+    const { data: rows, error } = await supabase
+      .from("blackout_players")
+      .select("player_slot, player_name, user_id")
+      .eq("game_id", gameId)
+      .order("player_slot");
+
+    if (!error && rows && active) {
+      setConnectedPlayers(
+        rows.map((p) => ({
+          player_slot: p.player_slot,
+          player_name: p.player_name,
+          is_taken: p.user_id !== null
+        }))
+      );
+    }
+  }
+
+  loadPlayers();
+
+  const channel = supabase
+    .channel(`blackout-host-${roomCode}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "blackout_players"
+      },
+      () => {
+        loadPlayers();
+      }
+    )
+    .subscribe();
+
+  return () => {
+    active = false;
+    supabase.removeChannel(channel);
+  };
+}, [mode, roomCode]);
+
   function resetScreen() {
     localStorage.removeItem("blackout_room");
     localStorage.removeItem("blackout_mode");
@@ -364,9 +423,36 @@ export default function Home() {
             >
               {roomCode}
             </div>
-            <p style={{ color: "#899b90" }}>
-              En attente de connexion des agents...
-            </p>
+            
+<h3 style={{ marginTop: 30 }}>
+  AGENTS CONNECTÉS
+  {" — "}
+  {connectedPlayers.filter((p) => p.is_taken).length}/3
+</h3>
+
+{connectedPlayers.map((player) => (
+  <div
+    key={player.player_slot}
+    style={{
+      padding: 15,
+      marginBottom: 10,
+      border: "1px solid #354139",
+      borderRadius: 8,
+      display: "flex",
+      justifyContent: "space-between"
+    }}
+  >
+    <strong>{player.player_name}</strong>
+    <span
+      style={{
+        color: player.is_taken ? "#d9ff43" : "#899b90"
+      }}
+    >
+      {player.is_taken ? "CONNECTÉ" : "EN ATTENTE"}
+    </span>
+  </div>
+))}
+
           </>
         )}
 
