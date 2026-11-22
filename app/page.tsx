@@ -1,9 +1,9 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import QRScanner from "./components/QRScanner";
+import { QRCodeSVG } from "qrcode.react";
 type Player = {
   player_slot: number;
   player_name: string;
@@ -31,6 +31,13 @@ const [roundWinnerName, setRoundWinnerName] =
 const [roundWinnerRole, setRoundWinnerRole] =
   useState<string | null>(null);
 const [serverOffset, setServerOffset] = useState(0);
+const [caseQr, setCaseQr] = useState("");
+const [pendingCaseQr, setPendingCaseQr] = useState<string | null>(null);
+const [hackChoice, setHackChoice] = useState<string | null>(null);
+const [caseScanAt, setCaseScanAt] = useState<string | null>(null);
+const [zoneScanAt, setZoneScanAt] = useState<string | null>(null);
+const [scores, setScores] = useState<{player_name:string;total_score:number;player_slot:number}[]>([]);
+const [joiningAsCaptain, setJoiningAsCaptain] = useState(false);
 const [spawnName, setSpawnName] = useState<string | null>(null);
 const [extractionName, setExtractionName] = useState<string | null>(null);
 const [spawnValidated, setSpawnValidated] = useState(false);
@@ -99,6 +106,8 @@ const [elapsedSeconds, setElapsedSeconds] = useState(0);
         if (savedMode === "host") {
           setRoomCode(savedCode);
           setMode("host");
+          const {data} = await supabase.rpc("blackout_resume_game", {p_room_code:savedCode});
+          if (data?.length) setJoined({game_id:data[0].game_id,player_name:data[0].player_name,player_slot:data[0].player_slot});
         }
 
         if (savedMode === "player") {
@@ -228,10 +237,11 @@ setMode("host");
       const player = data[0];
 
       localStorage.setItem("blackout_room", roomCode);
-      localStorage.setItem("blackout_mode", "player");
-
+      const captain = joiningAsCaptain || mode === "host";
+      localStorage.setItem("blackout_mode", captain ? "host" : "player");
       setJoined(player);
-      setMode("player");
+      setMode(captain ? "host" : "player");
+      setJoiningAsCaptain(false);
     } catch (err) {
       showError(err);
     } finally {
@@ -419,7 +429,7 @@ const extractionSeconds = extractionStartedAt
   : 120;
 
 useEffect(() => {
-  if (mode !== "player" || !roomCode) return;
+  if ((mode !== "player" && mode !== "host") || !joined || !roomCode) return;
 
   let active = true;
 
@@ -438,12 +448,14 @@ useEffect(() => {
 
     const round = data[0];
 
-    setRoundNumber(round.round_number);
-    setRoundStatus((previous) =>
-  previous === "finished" && round.round_status === "playing"
-    ? previous
-    : round.round_status
-);
+    setRoundNumber((previous)=>{
+      if(previous!==round.round_number){
+        setRoundWinnerName(null);setRoundWinnerRole(null);
+        setHackChoice(null);setPendingCaseQr(null);setCaseScanAt(null);setZoneScanAt(null);
+      }
+      return round.round_number;
+    });
+    setRoundStatus(round.round_status);
     setRoundStartedAt(round.started_at);
     setMyRole(round.my_role);
   }
@@ -457,7 +469,7 @@ useEffect(() => {
     active = false;
     clearInterval(interval);
   };
-}, [mode, roomCode]);
+}, [mode, roomCode, joined]);
 
 async function loadZones(code: string) {
   try {
@@ -539,6 +551,19 @@ async function handleZoneScan(value: string) {
         setScanMessage("✓ DÉPART / RESPAWN VALIDÉ");
         break;
 
+      case "CHOIX_PIRATAGE":
+        setPendingCaseQr(value);
+        setScanMessage("MALLETTE ACCÉDÉE — CHOISIS TON PIRATAGE");
+        break;
+      case "PIRATAGE_DEJA_EFFECTUE":
+        setScanMessage("PIRATAGE DÉJÀ UTILISÉ");
+        break;
+      case "MALLETTE_VALIDEE":
+        setScanMessage("✓ MALLETTE VALIDÉE — SCANNE LA ZONE SOUS 30 S");
+        break;
+      case "ZONE_VALIDEE":
+        setScanMessage("✓ ZONE VALIDÉE — SCANNE LA MALLETTE SOUS 30 S");
+        break;
       case "PROTOCOLE_LANCE":
         setScanMessage("✓ PROTOCOLE D'EXTRACTION LANCÉ");
         break;
@@ -579,7 +604,7 @@ async function handleZoneScan(value: string) {
 
 
 useEffect(() => {
-  if (mode !== "player" || !roomCode ||
+  if ((mode !== "player" && mode !== "host") || !joined || !roomCode ||
       roundStatus !== "playing") {
     return;
   }
@@ -608,9 +633,7 @@ useEffect(() => {
     setRespawnAt(state.respawn_at);
     setExtractionStartedAt(state.extraction_started_at);
     setExtractionCompletedAt(state.extraction_completed_at);
-    setExtractionValidated(
-      state.extraction_completed_at !== null
-    );
+    setExtractionValidated(state.extraction_completed_at !== null);
 
     setServerOffset(
       new Date(state.server_now).getTime() - Date.now()
@@ -625,7 +648,7 @@ useEffect(() => {
     active = false;
     clearInterval(interval);
   };
-}, [mode, roomCode, roundStatus]);
+}, [mode, roomCode, roundStatus, joined]);
 
 useEffect(() => {
   const interval = setInterval(() => {
@@ -655,7 +678,10 @@ async function reportHit() {
       setIsAlive(false);
       setSpawnValidated(false);
       setExtractionStartedAt(null);
-      setScanMessage("ÉLIMINÉ — ATTENDS TON RESPAWN");
+      setCaseScanAt(null);
+      setZoneScanAt(null);
+      setPendingCaseQr(null);
+      setScanMessage("ÉLIMINÉ — EXTRACTION ANNULÉE — ATTENDS TON RESPAWN");
     } else if (data === "DEJA_ELIMINE") {
       setScanMessage("TU ES DÉJÀ ÉLIMINÉ");
     } else if (data === "DEPART_NON_VALIDE") {
@@ -717,7 +743,65 @@ useEffect(() => {
     active = false;
     clearInterval(interval);
   };
-}, [mode, roomCode, roundStatus]);
+}, [mode, roomCode, roundStatus, joined]);
+
+  useEffect(() => {
+    if (mode !== "host" || !roomCode) return;
+    supabase.rpc("blackout_briefcase_qr",{p_room_code:roomCode}).then(({data,error})=>{
+      if (!error && data) setCaseQr(data);
+    });
+  },[mode,roomCode]);
+
+  useEffect(() => {
+    if (!joined || !roomCode || roundStatus!=="playing") return;
+    const refresh = async () => {
+      const {data} = await supabase.rpc("blackout_private_state",{p_room_code:roomCode});
+      if(data?.length){
+        setHackChoice(data[0].ghost_hack);
+        setCaseScanAt(data[0].briefcase_scanned_at);
+        setZoneScanAt(data[0].extraction_zone_scanned_at);
+      }
+    };
+    refresh();
+    const timer=setInterval(refresh,2000);
+    return ()=>clearInterval(timer);
+  },[joined,roomCode,roundStatus]);
+
+  useEffect(() => {
+    if(!joined||!roomCode||roundStatus!=="finished") return;
+    supabase.rpc("blackout_scoreboard",{p_room_code:roomCode}).then(({data})=>{
+      if(data) setScores(data);
+    });
+  },[joined,roomCode,roundStatus]);
+
+  async function confirmHack(choice:"COPY"|"REPLACE") {
+    if(!pendingCaseQr || busy) return;
+    setBusy(true);
+    try {
+      const {data,error}=await supabase.rpc("blackout_ghost_hack",{
+        p_room_code:roomCode,p_qr_value:pendingCaseQr,p_choice:choice
+      });
+      if(error) throw error;
+      setScanMessage(data==="PIRATAGE_CONFIRME"?`✓ PIRATAGE ${choice} ENREGISTRÉ`:String(data));
+      if(data==="PIRATAGE_CONFIRME") setHackChoice(choice);
+      setPendingCaseQr(null);
+    }catch(err){showError(err)}finally{setBusy(false)}
+  }
+
+  async function nextRound(){
+    if(busy) return;
+    setBusy(true);
+    try{
+      const {data,error}=await supabase.rpc("blackout_next_round",{p_room_code:roomCode});
+      if(error) throw error;
+      if(data===3 && roundNumber===3){setScanMessage("PARTIE TERMINÉE");return;}
+      setRoundNumber(Number(data));setRoundStatus("waiting");setRoundStartedAt(null);
+      setRoundWinnerName(null);setRoundWinnerRole(null);setMyRole(null);
+      setSpawnValidated(false);setExtractionStartedAt(null);setExtractionCompletedAt(null);
+      setHackChoice(null);setPendingCaseQr(null);setCaseScanAt(null);setZoneScanAt(null);
+      setScores([]);
+    }catch(err){showError(err)}finally{setBusy(false)}
+  }
 
   function resetScreen() {
     localStorage.removeItem("blackout_room");
@@ -734,7 +818,9 @@ setElapsedSeconds(0);
 setMyRole(null);
 setConnectedPlayers([]);
     setZones([]);
-
+    setPendingCaseQr(null);
+    setCaseQr("");
+    setScores([]);
   }
 
   const buttonStyle: React.CSSProperties = {
@@ -789,10 +875,10 @@ setConnectedPlayers([]);
         {mode === "home" && (
           <div style={{ display: "grid", gap: 14 }}>
             <button style={buttonStyle} onClick={() => setMode("create")}>
-              CRÉER UNE PARTIE — PC
+              CRÉER UNE PARTIE — CAPITAINE
             </button>
             <button style={buttonStyle} onClick={() => setMode("join")}>
-              REJOINDRE UNE PARTIE — TÉLÉPHONE
+              REJOINDRE UNE PARTIE — AGENT
             </button>
           </div>
         )}
@@ -908,6 +994,15 @@ setConnectedPlayers([]);
     </div>
 )}
 
+{roundStatus === "finished" && scores.length>0 && (
+  <div style={{padding:16,border:"1px solid #354139",borderRadius:10,marginBottom:16}}>
+    <h3>CLASSEMENT</h3>
+    {scores.map((p,i)=><p key={p.player_slot}>{i+1}. {p.player_name} — {p.total_score} pts</p>)}
+    {mode==="host" && <button style={buttonStyle} disabled={busy} onClick={nextRound}>
+      {roundNumber>=3?"TERMINER LA PARTIE":"PRÉPARER LA MANCHE SUIVANTE"}
+    </button>}
+  </div>
+)}
 {mode === "host" && (
   <>
     <h2>Salon créé</h2>
@@ -999,6 +1094,29 @@ setConnectedPlayers([]);
   </div>
 )}
 
+    {!joined && roundStatus === "waiting" && (
+      <div style={{marginTop:20,padding:16,border:"1px solid #d9ff43",borderRadius:10}}>
+        <h3>CAPITAINE : CHOISIS TON AGENT</h3>
+        <p>Tu joues sur ce même téléphone. Choisis ta place avant de lancer.</p>
+        {connectedPlayers.filter(p=>!p.is_taken).map(p=>(
+          <button key={p.player_slot} style={{...buttonStyle,marginBottom:8,background:selectedSlot===p.player_slot?"#d9ff43":"#354139",color:selectedSlot===p.player_slot?"#101410":"white"}}
+            onClick={()=>setSelectedSlot(p.player_slot)}>{p.player_name}</button>
+        ))}
+        <button style={buttonStyle} disabled={busy||selectedSlot===null} onClick={()=>{setJoiningAsCaptain(true);joinGame();}}>
+          JE SUIS CET AGENT
+        </button>
+      </div>
+    )}
+    {caseQr && roundStatus === "waiting" && (
+      <div style={{padding:16,border:"1px solid #d9ff43",borderRadius:10,marginTop:15}}>
+        <h3>QR UNIQUE DE LA MALLETTE</h3>
+        <div style={{background:"white",padding:16,width:"fit-content",margin:"12px auto"}}><QRCodeSVG value={caseQr} size={220} level="M" /></div>
+        <p style={{fontSize:12,overflowWrap:"anywhere"}}>{caseQr}</p>
+        <button style={buttonStyle} onClick={()=>navigator.clipboard.writeText(caseQr)}>COPIER LE CONTENU DU QR</button>
+        <button style={{...buttonStyle,marginTop:8,background:"#26364c",color:"white"}} onClick={()=>window.print()}>IMPRIMER LE QR DE LA MALLETTE</button>
+        <p style={{fontSize:12}}>Imprime ce QR et colle-le sur la mallette avant la partie.</p>
+      </div>
+    )}
     <h3 style={{ marginTop: 30 }}>
       AGENTS CONNECTÉS —{" "}
       {connectedPlayers.filter((p) => p.is_taken).length}/3
@@ -1072,7 +1190,7 @@ setConnectedPlayers([]);
   </>
 )}
 
-{mode === "player" && joined && (
+{(mode === "player" || mode === "host") && joined && (
 
           <>
             <h2>Agent connecté</h2>
@@ -1233,6 +1351,17 @@ setConnectedPlayers([]);
     />
   )}
 
+  {pendingCaseQr && roundStatus==="playing" && myRole==="ghost" && !hackChoice && (
+    <div style={{padding:16,border:"1px solid #d9ff43",borderRadius:10,marginTop:16}}>
+      <h3>PIRATAGE UNIQUE — CHOIX DÉFINITIF</h3>
+      <button style={{...buttonStyle,marginBottom:10}} disabled={busy} onClick={()=>confirmHack("COPY")}>COPY — VOLER RAVEN</button>
+      <button style={buttonStyle} disabled={busy} onClick={()=>confirmHack("REPLACE")}>REPLACE — VOLER VIPER</button>
+    </div>
+  )}
+  {myRole==="ghost" && hackChoice && <p>✓ PIRATAGE {hackChoice} ENREGISTRÉ</p>}
+  {myRole!=="ghost" && roundStatus==="playing" && spawnValidated && (
+    <p style={{fontSize:12,color:"#899b90"}}>Double scan extraction (30 s) : mallette {caseScanAt?"✓":"○"} + zone {zoneScanAt?"✓":"○"}</p>
+  )}
   {scanMessage && (
     <p
       style={{
