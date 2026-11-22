@@ -386,6 +386,21 @@ useEffect(() => {
   };
 }, [mode, roomCode]);
 
+async function loadZones(code: string) {
+  try {
+    const { data, error } = await supabase.rpc(
+      "blackout_get_zones",
+      { p_room_code: code }
+    );
+
+    if (error) throw error;
+
+    setZones(data || []);
+  } catch (err) {
+    console.error("Erreur chargement zones :", err);
+  }
+}
+
 async function addZone() {
   if (!zoneName.trim()) {
     setError("Entre un nom de zone.");
