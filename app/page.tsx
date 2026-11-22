@@ -325,7 +325,6 @@ const channel = supabase
   };
 }, [mode, roomCode]);
 
-a
 async function startRound() {
   setError("");
   setBusy(true);
@@ -339,21 +338,6 @@ async function startRound() {
     );
 
     if (error) throw error;
-
-    if (!data || data.length === 0) {
-      throw new Error("Impossible de lancer la manche.");
-    }
-
-    setRoundNumber(data[0].round_number);
-    setRoundStartedAt(data[0].started_at);
-    setRoundStatus("playing");
-  } catch (err) {
-    showError(err);
-  } finally {
-    setBusy(false);
-  }
-}
-
 
     if (!data || data.length === 0) {
       throw new Error("Impossible de lancer la manche.");
