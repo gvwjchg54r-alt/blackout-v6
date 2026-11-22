@@ -24,7 +24,16 @@ export default function Home() {
   const [connectedPlayers, setConnectedPlayers] = useState<Player[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [joined, setJoined] = useState<JoinedPlayer | null>(null);
-  const [busy, setBusy] = useState(false);  
+  const [busy, setBusy] = useState(false); 
+  const [zoneName, setZoneName] = useState("");
+const [allowSpawn, setAllowSpawn] = useState(true);
+const [allowExtraction, setAllowExtraction] = useState(true);
+const [zones, setZones] = useState<{
+  zone_id: string;
+  zone_name: string;
+  qr_token: string;
+}[]>([]);
+
 const [roundNumber, setRoundNumber] = useState(0);
 const [roundStartedAt, setRoundStartedAt] = useState<string | null>(null);
 const [roundStatus, setRoundStatus] = useState("waiting");
@@ -377,6 +386,42 @@ useEffect(() => {
   };
 }, [mode, roomCode]);
 
+async function addZone() {
+  if (!zoneName.trim()) {
+    setError("Entre un nom de zone.");
+    return;
+  }
+
+  setBusy(true);
+  setError("");
+
+  try {
+    await getUser();
+
+    const { data, error } = await supabase.rpc(
+      "blackout_add_zone",
+      {
+        p_room_code: roomCode,
+        p_zone_name: zoneName.trim(),
+        p_allow_spawn: allowSpawn,
+        p_allow_extraction: allowExtraction
+      }
+    );
+
+    if (error) throw error;
+    if (!data?.length) {
+      throw new Error("Impossible de créer la zone.");
+    }
+
+    setZones((previous) => [...previous, data[0]]);
+    setZoneName("");
+  } catch (err) {
+    showError(err);
+  } finally {
+    setBusy(false);
+  }
+}
+
   function resetScreen() {
     localStorage.removeItem("blackout_room");
     localStorage.removeItem("blackout_mode");
@@ -553,6 +598,65 @@ setConnectedPlayers([]);
     >
       {roomCode}
     </div>
+
+{roundStatus === "waiting" && (
+  <div style={{ marginTop: 30 }}>
+    <h3>CONFIGURATION DU TERRAIN</h3>
+
+    <input
+      style={inputStyle}
+      placeholder="Nom de la zone (ex. ALPHA)"
+      value={zoneName}
+      maxLength={40}
+      onChange={(e) => setZoneName(e.target.value)}
+    />
+
+    <label style={{ display: "block", marginBottom: 12 }}>
+      <input
+        type="checkbox"
+        checked={allowSpawn}
+        onChange={(e) => setAllowSpawn(e.target.checked)}
+      />
+      {" "}Zone de spawn
+    </label>
+
+    <label style={{ display: "block", marginBottom: 20 }}>
+      <input
+        type="checkbox"
+        checked={allowExtraction}
+        onChange={(e) => setAllowExtraction(e.target.checked)}
+      />
+      {" "}Zone d'extraction
+    </label>
+
+    <button
+      style={buttonStyle}
+      disabled={busy || !zoneName.trim()}
+      onClick={addZone}
+    >
+      AJOUTER LA ZONE
+    </button>
+
+    <div style={{ marginTop: 25 }}>
+      {zones.map((zone) => (
+        <div
+          key={zone.zone_id}
+          style={{
+            padding: 15,
+            marginBottom: 10,
+            border: "1px solid #354139",
+            borderRadius: 8
+          }}
+        >
+          <strong>{zone.zone_name}</strong>
+          <p style={{ color: "#899b90", fontSize: 12 }}>
+            QR enregistré — prêt à générer
+          </p>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 
     <h3 style={{ marginTop: 30 }}>
       AGENTS CONNECTÉS —{" "}
