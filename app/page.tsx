@@ -637,6 +637,18 @@ setConnectedPlayers([]);
       AJOUTER LA ZONE
     </button>
 
+<button
+  style={{
+    ...buttonStyle,
+    marginTop: 12,
+    background: "#26364c",
+    color: "white"
+  }}
+  onClick={() => window.open("/print", "_blank")}
+>
+  IMPRIMER LES QR CODES
+</button>
+
     <div style={{ marginTop: 25 }}>
       {zones.map((zone) => (
         <div
