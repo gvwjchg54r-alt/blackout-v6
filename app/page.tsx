@@ -277,10 +277,11 @@ async function startRound() {
   try {
     await getUser();
 
-    const { data, error } = await supabase.rpc(
-      "blackout_start_round",
-      { p_room_code: roomCode }
-    );
+
+const { data, error } = await supabase.rpc(
+  "blackout_start_round",
+  { p_room_code: roomCode }
+);
 
     if (error) throw error;
 
