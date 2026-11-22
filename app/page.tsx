@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-
+import QRScanner from "./components/QRScanner";
 type Player = {
   player_slot: number;
   player_name: string;
@@ -20,6 +20,8 @@ export default function Home() {
   const [mode, setMode] = useState<"home" | "create" | "join" | "host" | "player">("home");
   const [names, setNames] = useState(["", "", ""]);
   const [roomCode, setRoomCode] = useState("");
+const [scannerOpen, setScannerOpen] = useState(false);
+const [scanMessage, setScanMessage] = useState("");
   const [players, setPlayers] = useState<Player[]>([]);
   const [connectedPlayers, setConnectedPlayers] = useState<Player[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
@@ -468,6 +470,38 @@ async function addZone() {
   }
 }
 
+async function handleZoneScan(value: string) {
+  setScannerOpen(false);
+  setScanMessage("Vérification du QR code...");
+
+  try {
+    const { data, error } = await supabase.rpc(
+      "blackout_check_zone",
+      {
+        p_room_code: roomCode,
+        p_qr_value: value
+      }
+    );
+
+    if (error) throw error;
+
+    const result = data?.[0];
+
+    if (result?.valid) {
+      setScanMessage(
+        `✓ ZONE ${result.zone_name} RECONNUE`
+      );
+    } else {
+      setScanMessage(
+        "✕ QR CODE INVALIDE POUR CE SALON"
+      );
+    }
+  } catch (err) {
+    console.error(err);
+    setScanMessage("✕ ERREUR DE VÉRIFICATION");
+  }
+}
+
   function resetScreen() {
     localStorage.removeItem("blackout_room");
     localStorage.removeItem("blackout_mode");
@@ -805,6 +839,41 @@ setConnectedPlayers([]);
               <h2 style={{ color: "#d9ff43" }}>{joined.player_name}</h2>
               <p>Salon : {roomCode}</p>
               
+<div style={{ marginTop: 25 }}>
+  {!scannerOpen && (
+    <button
+      style={buttonStyle}
+      onClick={() => {
+        setScanMessage("");
+        setScannerOpen(true);
+      }}
+    >
+      SCANNER UN QR CODE
+    </button>
+  )}
+
+  {scannerOpen && (
+    <QRScanner
+      onScan={handleZoneScan}
+      onClose={() => setScannerOpen(false)}
+    />
+  )}
+
+  {scanMessage && (
+    <p
+      style={{
+        marginTop: 20,
+        textAlign: "center",
+        color: scanMessage.startsWith("✓")
+          ? "#d9ff43"
+          : "#ff6868"
+      }}
+    >
+      {scanMessage}
+    </p>
+  )}
+</div>
+
 {roundStatus === "playing" && myRole ? (
   <div style={{ marginTop: 25 }}>
     <p style={{ color: "#899b90" }}>
